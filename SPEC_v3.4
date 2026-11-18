@@ -1,0 +1,42 @@
+# Simulation Design Authority Specification (v3.4 — Final Build Authority)
+**Project:** Apex Actuation Systems — 6-Gate Manufacturing Investment & Operational-Readiness Simulator  
+**Delivery Format:** 100% Offline Single-File Web Application (`dist-offline/index.html`) + Documented `JSON/CSV` Export for Siemens Tecnomatix Plant Simulation  
+**Engineering Standards:** Strict British English throughout, zero legacy slide-pack references, modular TypeScript source files (`= 70%` ergonomic/jib-crane lift coverage on heavy housings & zero aisle congestion hazards.
+* **Q (Quality):** Rolled Factory RFT **`>= 99.0%`** + verified batch/serial traceability.
+* **C (Cost):** Total committed CapEx within scenario budget (or Board Escalation approved with **`< 15.0-month` cumulative cash-flow payback** and positive **36-Month NPV at `10%` discount rate**).
+* **D (Delivery):** Factory lead time **`<= 5.0 days`** (verified via Little's Law `WIP = Throughput × Lead Time`) + Gate 5 Operational Release on or before Target Go-Live Date.
+* **P (People):** Every operator station **`<= Customer Takt`** **AND** **Internal Line Balance Rate (`LBR`) `>= 85.0%`** + verified cross-training.
+
+### Four Replayable Scenarios (`Facilitator Selectable`)
+1. **Scenario A — "The Margin & Mix Squeeze" *(Default)*:** Total OEM demand rises `+25%` (`100 -> 125 units/wk`): Repeaters `+35%` (`38 -> 51.3`), Strangers `+40%` (`2 -> 2.8`), Runners residual (`60 -> 70.9`, `+18.2%`), choking Mill B (`£800k` CapEx, `24-Week` Go-Live, `4.30m` takt).
+2. **Scenario B — "The Quality & Rework Crisis":** Fixture wear (`0.915`), paper revision errors (`0.970`), and uncalibrated manual test gauges (`0.963`) drop baseline rolled RFT to `0.915 × 0.980 × 0.970 × 0.963` = **`83.80%`** (`£800k` CapEx, `24-Week` Go-Live).
+3. **Scenario C — "The Footprint Consolidation":** Two satellite cells transfer into the `120m x 72m` main plant (`£740k` CapEx, `22-Week` Go-Live, streamlined `£45k` civil scope).
+4. **Scenario D — "The Takt Ramp-Up":** Customer takt tightens from **`4.30 min` to `3.40 min`**, requiring method waste removal (`E6/E7`) + multi-operator Yamazumi rebalancing (`LBR >= 85.0%`, all stations `<= 3.40m`).
+
+### Four Asymmetric Team Charters (`Team 1–4`) & Engine-Computed Reference Benchmarks
+* **Team 1 (`Capital Efficiency Charter` — Payback `< 12.0 months`):** Disciplined Gates 0–2 (`£100k`), **UK OEM Retrofit (`£225k`, `98.8%` base machining FPY)** + Cell Furniture (`£95k`) + Poka-Yoke (`£45k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£645k` total**.
+* **Team 2 (`Accelerated Go-Live Charter` — Go-Live `22 Weeks`):**
+  * *Scenarios A/B/D (`£800k`):* Disciplined Gates 0–2 (`£100k`), **French/Spanish Cell (`£265k`, `99.5%` base machining FPY) + `£25k` FAT Expediting** + Cell Furniture (`£95k`) + Poka-Yoke (`£45k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£710k` total** (`20w` CPM path: `A1(3w) -> A3(12w) -> A5(2w) -> A7(3w)`).
+  * *Scenario C (`£740k`):* Disciplined Gates 0–2 (`£95k`), **UK OEM Retrofit (`£225k`) + `£25k` Expediting** + Cell Furniture (`£95k`) + Poka-Yoke (`£45k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£665k` total** (`16w` CPM path: `A1(3w) -> A3(8w) -> A5(2w) -> A7(3w)`).
+* **Team 3 (`Volume Surge Charter` — `+30%` OEM Demand Surge):** Disciplined Gates 0–2 (`£100k`), **French/Spanish Cell (`£265k`)** + Cell Furniture (`£95k`) + Automated Test Rig (`£90k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£730k` total** (`£10k` under Scenario C `£740k` and `£70k` under `£800k`).
+* **Team 4 (`Zero-Defect Traceability Charter` — Rolled RFT `>= 99.5%`):**
+  * *Scenarios A/B/D (`£800k`):* Disciplined Gates 0–2 (`£100k`), **French/Spanish Cell (`£265k`)** + Cell Furniture (`£95k`) + Poka-Yoke (`£45k`) + Test Rig (`£90k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£775k` total** (`99.64%` Rolled RFT).
+  * *Scenario C (`£740k`):* Disciplined Gates 0–2 (`£100k`), **French/Spanish Cell (`£265k`)** + Cell Furniture (`£95k`) + Poka-Yoke (`£45k`) + Full MES (`£145k`) + Gate 5 (`£35k`) = **`£685k` total** (retains Poka-Yoke for `99.58%` Rolled RFT cleanly inside `£740k`).
+
+---
+
+## 2. Layer 2: Five Coupled Calculation Engines (`src/domain/engines/`)
+
+1. **Engine 1 (`Demand & Mix`):** Weekly unit demand per family, Stranger ring-fencing disruption factor, Customer Takt (`min/unit`).
+2. **Engine 2 (`Capacity, OEE & TEEP`):** `Utilisation`, `OEE = A × P × Q`, `TEEP` (`104 hr/wk`). Missing shadow boards/tool control reduces Machine Availability by `-16 mins/shift` (`-3.5%` OEE). 3rd night shift increases calendar loading (`TEEP`) but adds `+£185k/yr` OpEx and `-1.2%` night-shift quality variance.
+3. **Engine 3 (`Flow, Kingman VUT & Little's Law`):** Kingman's VUT queue (`Wq = ((ca^2 + cs^2)/2) × (rho/(1 - rho)) × te`) with multi-server scaling and **Little's Law (`WIP = Throughput × Lead Time`)** cross-checks so relieving Mill B without addressing Heat Treat/NDT or Endurance Test visibly migrates the bottleneck downstream.
+4. **Engine 4 (`Composite Quality & Yamazumi`):**
+   * **Rolled RFT:** `FPY_machining × FPY_special × FPY_assembly × FPY_test`. Machine selection sets base machining FPY (`Japanese: 99.6%`, `German: 99.7%`, `French/Spanish: 99.5%`, `UK Retrofit: 98.8%`); Cell Furniture/Jib Cranes eliminate `-2.2%` handling damage; Poka-Yoke eliminates `+1.4%` assembly mis-builds; **Full MES** eliminates paper/tool escapes (`+1.1%` FPY) and enforces zero-fault-forward interlocks.
+   * **Yamazumi Engine:** Starts from baseline 3-station split (`1.40m / 1.90m / 1.40m`), allocates `E1–E8` across `N` operators (`2 to 5`), keeps `E4` (`0.30m` automatic) concurrent, strips `E6` (`0.55m` walk) with Cell Furniture and `E7` (`0.40m` paper check) with Full MES, computing max station cycle and internal `LBR`.
+5. **Engine 5 (`Reconciled Financial & 7-Node Critical-Path Programme`):**
+   * **Financials:** `Remaining CapEx = Approved Budget − Actual Committed Expenditure`, **36-Month NPV (`10%` discount rate)**, **Cumulative Cash-Flow Payback (`Months`)**.
+   * **7-Node CPM Precedence Network (`ES, EF, LS, LF, Float, Critical Path`):**
+     * `A1` Mandate & Define (`3w`, Start `0`)
+     * `A2` Civil, Power & Monument Prep (`4w`, Predecessor: `A1`)
+     * `A3` Machine Manufacture & Supplier FAT (`8–24w`, Predecessor: `A1` — runs **in parallel** with `A2`)
+     * `A4` MES Architecture & Cell Tooling Design (`4w`, Predecessor: `A1` — runs **in parallel** with `A2/A3`)
