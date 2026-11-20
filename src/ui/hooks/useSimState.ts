@@ -6,11 +6,18 @@ import { computeCapacity } from '../../domain/engines/capacityEngine';
 import { computeRolledRFT, computeYamazumi, computeBaselineLBR } from '../../domain/engines/qualityYamazumiEngine';
 import { computeFinance, computeCPM, buildDefaultCPM } from '../../domain/engines/programmeFinanceEngine';
 import { computeFlow } from '../../domain/engines/flowEngine';
-import { assessGateExit, GateId } from '../../domain/governance/gateStateMachine';
+import { assessGateExit, GateId, ECR_COST_GBP, ECR_SCHEDULE_SLIP_WEEKS, MAX_ECRS } from '../../domain/governance/gateStateMachine';
 import { encodeFingerprint } from '../../domain/governance/decisionFingerprint';
 import { runMonteCarlo } from '../../domain/governance/monteCarlo';
 import { MACHINE_OPTIONS, ANCILLARY_PACKAGES, GATE_COSTS } from '../../domain/baseline/charters';
 import { MILL_B } from '../../domain/baseline/plantConstants';
+
+/** Position of a movable bay asset (SVG coordinate space, 240×180 → 30m×20m). */
+export interface BayPosition {
+  id: string;
+  x: number;
+  y: number;
+}
 
 export interface SimDecisions {
   scenarioId: ScenarioId;
@@ -23,10 +30,37 @@ export interface SimDecisions {
   fatExpediting: boolean;
   operatorCount: number;
   nightShiftActive: boolean;
+  /** Derived from standardisationPct < 80; kept for backward-compat with existing components. */
   shadowBoardAbsent: boolean;
+  /** Alias for activeGate; kept for backward-compat. */
   currentGate: GateId;
   useReducedGateCost: boolean;
+
+  // v3.5 gate-specific params
+  serviceBufferPct: number;        // G0: 0–15%
+  standardisationPct: number;      // G1: 0–100%
+  batchTransferSize: number;       // G1: 1–20
+  shiftPolicy: 'single' | 'double'; // G1
+  civilPrepGBP: number;            // G2: £25k–£80k
+  tpmIntervalWeeks: number;        // G2: 1–8 weeks
+  bayPositions: BayPosition[];     // G3: movable asset positions
+  pfdAllowancePct: number;         // G4: 5–15%
+  pokaYokeFixtureGBP: number;      // G4: £0–£15k additional fixture spend
+  commissioningBufferWeeks: number; // G5: 0–8 weeks
+
+  // v3.5 gate governance
+  activeGate: GateId;
+  passedGates: GateId[];
+  ecrCount: number;  // 0–3
 }
+
+/** Default movable bay positions (excluding HT monument). */
+const DEFAULT_BAY_POSITIONS: BayPosition[] = [
+  { id: 'cell5ax',  x: 10,  y: 10  },
+  { id: 'ucell',    x: 10,  y: 70  },
+  { id: 'kitting',  x: 90,  y: 70  },
+  { id: 'testrig',  x: 150, y: 10  },
+];
 
 const DEFAULT_DECISIONS: SimDecisions = {
   scenarioId: 'A',
@@ -42,7 +76,44 @@ const DEFAULT_DECISIONS: SimDecisions = {
   shadowBoardAbsent: true,
   currentGate: 0,
   useReducedGateCost: false,
+  serviceBufferPct: 0,
+  standardisationPct: 60,
+  batchTransferSize: 10,
+  shiftPolicy: 'single',
+  civilPrepGBP: 0,
+  tpmIntervalWeeks: 4,
+  bayPositions: DEFAULT_BAY_POSITIONS,
+  pfdAllowancePct: 10,
+  pokaYokeFixtureGBP: 0,
+  commissioningBufferWeeks: 2,
+  activeGate: 0,
+  passedGates: [],
+  ecrCount: 0,
 };
+
+/** Asset sizes for spaghetti calculation (must match CellLayoutSVG INITIAL_ASSETS). */
+const ASSET_DIMS: Record<string, { w: number; h: number }> = {
+  cell5ax: { w: 70, h: 50 },
+  ucell:   { w: 60, h: 40 },
+  kitting: { w: 50, h: 30 },
+  testrig: { w: 70, h: 50 },
+};
+
+/** Compute spaghetti travel distance (m) from movable bay positions only. */
+function computeSpaghettiDistance(positions: BayPosition[]): number {
+  const pts = positions.map(p => {
+    const dims = ASSET_DIMS[p.id] ?? { w: 60, h: 40 };
+    return { x: p.x + dims.w / 2, y: p.y + dims.h / 2 };
+  });
+  let dist = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    dist += Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+  }
+  // SVG 240×180 represents 30m×20m → scale = 30/240 = 0.125 m/px
+  return dist * 0.125;
+}
 
 export function useSimState() {
   const [decisions, setDecisions] = useState<SimDecisions>(DEFAULT_DECISIONS);
@@ -58,7 +129,21 @@ export function useSimState() {
       (p.fatExpediting && decisions.fatExpediting)
     );
     const gateCost = decisions.useReducedGateCost ? GATE_COSTS.gates02Reduced : GATE_COSTS.gates02Standard;
-    const committed = gateCost + machine.costGBP + ancillaries.reduce((s, p) => s + p.costGBP, 0) + GATE_COSTS.gate5;
+    const ecrCostTotal = decisions.ecrCount * ECR_COST_GBP;
+    const ecrScheduleSlip = decisions.ecrCount * ECR_SCHEDULE_SLIP_WEEKS;
+    const committed = gateCost
+      + machine.costGBP
+      + ancillaries.reduce((s, p) => s + p.costGBP, 0)
+      + GATE_COSTS.gate5
+      + decisions.civilPrepGBP
+      + decisions.pokaYokeFixtureGBP
+      + ecrCostTotal;
+
+    // shadowBoardAbsent derived from standardisationPct (v3.5)
+    const shadowBoardAbsent = decisions.standardisationPct < 80;
+
+    const spaghettiDistanceM = computeSpaghettiDistance(decisions.bayPositions);
+    const machineProvenanceIsHeavy = decisions.machineId === 'GER' || decisions.machineId === 'JPN';
 
     const demand = computeDemand({
       runners: scenario.runners,
@@ -70,14 +155,18 @@ export function useSimState() {
       availability: MILL_B.baseAvailabilityPct,
       performance: MILL_B.basePerformancePct,
       quality: MILL_B.baseQualityPct,
-      shadowBoardAbsent: decisions.shadowBoardAbsent,
+      shadowBoardAbsent,
       nightShiftActive: decisions.nightShiftActive,
     });
 
     const rft = computeRolledRFT({
       baseMachiningFPY: machine.baseMachiningFPY ?? 0.996,
       scenarioBDegradation: scenario.qualityDegradation
-        ? { fixtureWear: scenario.qualityDegradation.fixtureWear, paperRevisionErrors: scenario.qualityDegradation.fixtureWear, uncalibratedGauges: scenario.qualityDegradation.uncalibratedGauges }
+        ? {
+            fixtureWear: scenario.qualityDegradation.fixtureWear,
+            paperRevisionErrors: scenario.qualityDegradation.paperRevisionErrors, // v3.5 bug fix
+            uncalibratedGauges: scenario.qualityDegradation.uncalibratedGauges,
+          }
         : undefined,
       cellFurnitureInstalled: decisions.cellFurniture,
       pokaYokeInstalled: decisions.pokaYoke,
@@ -98,8 +187,10 @@ export function useSimState() {
     const a3Duration = decisions.fatExpediting ? 12 : 16;
     const cpmActivities = buildDefaultCPM(a3Duration);
     const cpm = computeCPM(cpmActivities);
+    // Add ECR schedule slip to project duration
+    const adjustedDurationWeeks = cpm.projectDurationWeeks + ecrScheduleSlip + decisions.commissioningBufferWeeks;
 
-    const annualBenefit = 350_000; // baseline annual saving assumption
+    const annualBenefit = 350_000;
     const finance = computeFinance({
       approvedBudgetGBP: scenario.capexBudgetGBP,
       committedExpenditureGBP: committed,
@@ -116,7 +207,7 @@ export function useSimState() {
     ]);
 
     const gateAssessment = assessGateExit({
-      gateId: decisions.currentGate,
+      gateId: decisions.activeGate,
       oee: capacity.oee,
       rolledRFT: rft.rolledRFT,
       capexCommittedGBP: committed,
@@ -126,16 +217,24 @@ export function useSimState() {
       leadTimeDays: flow.systemLeadTimeDays,
       lbr: yamazumi.lbr,
       allStationsWithinTakt: yamazumi.allStationsWithinTakt,
-      projectDurationWeeks: cpm.projectDurationWeeks,
+      projectDurationWeeks: adjustedDurationWeeks,
       targetGoLiveWeeks: scenario.goLiveWeeks,
+      serviceBufferPct: decisions.serviceBufferPct,
+      standardisationPct: decisions.standardisationPct,
+      civilPrepGBP: decisions.civilPrepGBP,
+      civilPrepMinGBP: scenario.civilPrepMinGBP,
+      civilPrepMinHeavyGBP: scenario.civilPrepMinHeavyGBP,
+      machineProvenanceIsHeavy,
+      spaghettiDistanceM,
     });
 
     const monteCarlo = runMonteCarlo({
-      baseDurationWeeks: cpm.projectDurationWeeks,
+      baseDurationWeeks: adjustedDurationWeeks,
       durationCv: 0.1,
       baseRolledRFT: rft.rolledRFT,
       baseOEE: capacity.oee,
       redGateCount: gateAssessment.status === 'Red' ? 1 : 0,
+      openActionCount: gateAssessment.openActionCount,
     });
 
     const fingerprint = encodeFingerprint({
@@ -149,15 +248,62 @@ export function useSimState() {
       fatExpediting: decisions.fatExpediting,
       operatorCount: decisions.operatorCount,
       nightShiftActive: decisions.nightShiftActive,
-      shadowBoardAbsent: decisions.shadowBoardAbsent,
+      shadowBoardAbsent,
     });
 
-    return { scenario, machine, committed, demand, capacity, rft, yamazumi, baselineLBR, cpm, finance, flow, gateAssessment, monteCarlo, fingerprint };
+    return {
+      scenario, machine, committed, demand, capacity, rft, yamazumi, baselineLBR,
+      cpm, finance, flow, gateAssessment, monteCarlo, fingerprint,
+      shadowBoardAbsent, spaghettiDistanceM, machineProvenanceIsHeavy,
+      adjustedDurationWeeks, ecrCostTotal, ecrScheduleSlip,
+    };
   }, [decisions]);
 
   function update(patch: Partial<SimDecisions>) {
-    setDecisions(d => ({ ...d, ...patch }));
+    setDecisions(d => {
+      const next = { ...d, ...patch };
+      // Keep shadowBoardAbsent in sync with standardisationPct
+      if ('standardisationPct' in patch) {
+        next.shadowBoardAbsent = next.standardisationPct < 80;
+      }
+      // Keep currentGate in sync with activeGate
+      if ('activeGate' in patch) {
+        next.currentGate = next.activeGate;
+      }
+      return next;
+    });
   }
 
-  return { decisions, computed, update };
+  function advanceGate() {
+    setDecisions(d => {
+      if (d.activeGate >= 5) return d;
+      const nextGate = (d.activeGate + 1) as GateId;
+      return {
+        ...d,
+        passedGates: [...d.passedGates, d.activeGate],
+        activeGate: nextGate,
+        currentGate: nextGate,
+      };
+    });
+  }
+
+  function raiseECR(gateId: GateId) {
+    setDecisions(d => {
+      if (d.ecrCount >= MAX_ECRS) return d;
+      const passedWithout = d.passedGates.filter(g => g !== gateId);
+      return {
+        ...d,
+        passedGates: passedWithout,
+        activeGate: gateId,
+        currentGate: gateId,
+        ecrCount: d.ecrCount + 1,
+      };
+    });
+  }
+
+  function resetRun() {
+    setDecisions(DEFAULT_DECISIONS);
+  }
+
+  return { decisions, computed, update, advanceGate, raiseECR, resetRun };
 }

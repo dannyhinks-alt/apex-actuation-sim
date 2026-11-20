@@ -18,6 +18,10 @@ export interface Scenario {
     uncalibratedGauges: number;
   };
   civilScopeGBP?: number;
+  /** Gate 2 minimum civil prep spend for Scenario C (standard machines). */
+  civilPrepMinGBP?: number;
+  /** Gate 2 minimum civil prep spend for Scenario C (heavy/large-footprint machines: GER or JPN). */
+  civilPrepMinHeavyGBP?: number;
 }
 
 export const SCENARIOS: Record<ScenarioId, Scenario> = {
@@ -59,6 +63,8 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
     repeaters: 38,
     strangers: 2,
     civilScopeGBP: 45_000,
+    civilPrepMinGBP: 45_000,
+    civilPrepMinHeavyGBP: 60_000,
   },
   D: {
     id: 'D',

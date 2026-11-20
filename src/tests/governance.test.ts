@@ -23,6 +23,8 @@ describe('gateStateMachine', () => {
     const r = assessGateExit(GOOD_INPUT);
     expect(r.status).toBe('Green');
     expect(r.rebaselinePenaltyWeeks).toBe(0);
+    expect(r.readinessPct).toBe(100);
+    expect(r.openActionCount).toBe(0);
   });
 
   it('rolled RFT below 99% at Gate 2 → Red', () => {
@@ -45,6 +47,26 @@ describe('gateStateMachine', () => {
     const r = assessGateExit({ ...GOOD_INPUT, lbr: 0.83 });
     expect(r.status).toBe('Amber');
     expect(r.amberActions.length).toBeGreaterThan(0);
+    expect(r.readinessPct).toBeLessThan(100);
+    expect(r.openActionCount).toBeGreaterThan(0);
+  });
+
+  it('readinessPct formula: 100 − red×25 − amber×8', () => {
+    // 1 amber action → 100 − 8 = 92
+    const r = assessGateExit({ ...GOOD_INPUT, lbr: 0.83 });
+    const expected = Math.max(0, 100 - r.redBlockReasons.length * 25 - r.amberActions.length * 8);
+    expect(r.readinessPct).toBe(expected);
+  });
+
+  it('Scenario C civil prep below minimum → Red block', () => {
+    const r = assessGateExit({ ...GOOD_INPUT, civilPrepGBP: 20_000, civilPrepMinGBP: 45_000 });
+    expect(r.status).toBe('Red');
+    expect(r.redBlockReasons.some(s => s.includes('Civil'))).toBe(true);
+  });
+
+  it('Gate 3 spaghetti distance >26m → Amber', () => {
+    const r = assessGateExit({ ...GOOD_INPUT, gateId: 3 as const, spaghettiDistanceM: 30 });
+    expect(r.amberActions.some(s => s.includes('Spaghetti'))).toBe(true);
   });
 
   it('Gate 0 ignores quality/people checks', () => {
@@ -102,5 +124,11 @@ describe('monteCarlo', () => {
     const noRed = runMonteCarlo({ baseDurationWeeks: 20, durationCv: 0.1, baseRolledRFT: 0.996, baseOEE: 0.88, redGateCount: 0, seed: 1 });
     const withRed = runMonteCarlo({ baseDurationWeeks: 20, durationCv: 0.1, baseRolledRFT: 0.996, baseOEE: 0.88, redGateCount: 3, seed: 1 });
     expect(withRed.p90Weeks).toBeGreaterThanOrEqual(noRed.p90Weeks);
+  });
+
+  it('openActionCount adds +5% CV per open amber action', () => {
+    const noAmber = runMonteCarlo({ baseDurationWeeks: 20, durationCv: 0.05, baseRolledRFT: 0.996, baseOEE: 0.88, redGateCount: 0, openActionCount: 0, seed: 7 });
+    const withAmber = runMonteCarlo({ baseDurationWeeks: 20, durationCv: 0.05, baseRolledRFT: 0.996, baseOEE: 0.88, redGateCount: 0, openActionCount: 4, seed: 7 });
+    expect(withAmber.p90Weeks).toBeGreaterThan(noAmber.p90Weeks);
   });
 });

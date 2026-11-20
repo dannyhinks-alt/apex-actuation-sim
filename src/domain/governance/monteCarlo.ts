@@ -26,6 +26,8 @@ export interface MonteCarloInput {
   baseOEE: number;
   /** Gate exit status (Red gates increase variance). */
   redGateCount: number;
+  /** Open amber actions from gate assessment; each adds +5% duration CV (v3.5). */
+  openActionCount?: number;
   seed?: number;
 }
 
@@ -62,7 +64,8 @@ export function runMonteCarlo(input: MonteCarloInput): MonteCarloResult {
   let sqPass = 0, cdPass = 0, pPass = 0;
 
   const redPenaltyCv = 0.05 * input.redGateCount;
-  const effectiveCv = input.durationCv + redPenaltyCv;
+  const amberPenaltyCv = 0.05 * (input.openActionCount ?? 0);
+  const effectiveCv = input.durationCv + redPenaltyCv + amberPenaltyCv;
 
   for (let i = 0; i < ITERATIONS; i++) {
     const dur = randNormal(rand, input.baseDurationWeeks, effectiveCv);
